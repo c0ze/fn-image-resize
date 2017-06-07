@@ -1,0 +1,6 @@
+name: coze/image-resize
+version: 0.0.1
+runtime: node
+entrypoint: node func.js
+path: /image-resize
+max_concurrency: 1
