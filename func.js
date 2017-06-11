@@ -1,39 +1,59 @@
 'use strict';
 
-const AWS = require('aws-sdk');
-const S3 = new AWS.S3({
-  signatureVersion: 'v4',
-});
 const Sharp = require('sharp');
 
-const BUCKET = process.env.BUCKET;
-const URL = process.env.URL;
+var assert = require('assert');
+var fs = require('fs');
+var manta = require('manta');
 
-exports.handler = function(event, context, callback) {
-  const key = event.queryStringParameters.key;
-  const match = key.match(/(\d+)x(\d+)\/(.*)/);
-  const width = parseInt(match[1], 10);
-  const height = parseInt(match[2], 10);
-  const originalKey = match[3];
+var client = manta.createClient({
+    sign: manta.privateKeySigner({
+        key: fs.readFileSync(process.env.HOME + '/.ssh/arda_iron_joyent_id_rsa', 'utf8'),
+        keyId: process.env.MANTA_KEY_ID,
+        user: process.env.MANTA_USER
+    }),
+    user: process.env.MANTA_USER,
+    url: process.env.MANTA_URL
+});
+console.log('manta ready: %s', client.toString());
+var wstream = fs.createWriteStream('local_marble.jpg');
+var crypto = require('crypto');
+var MemoryStream = require('memorystream');
 
-  S3.getObject({Bucket: BUCKET, Key: originalKey}).promise()
-    .then(data => Sharp(data.Body)
-      .resize(width, height)
-      .toFormat('png')
-      .toBuffer()
-    )
-    .then(buffer => S3.putObject({
-        Body: buffer,
-        Bucket: BUCKET,
-        ContentType: 'image/png',
-        Key: key,
-      }).promise()
-    )
-    .then(() => callback(null, {
-        statusCode: '301',
-        headers: {'location': `${URL}/${key}`},
-        body: '',
-      })
-    )
-    .catch(err => callback(err))
-}
+client.get('~~/stor/iron-fn-demo/The_Blue_Marble.jpg', function (err, stream) {
+    assert.ifError(err);
+
+//    stream.setEncoding('utf8');
+    stream.on('data', function (chunk) {
+	wstream.write(chunk);
+    });
+
+    var width = 300;
+    var height = 300;
+
+    stream.on('finish', () => {
+	Sharp('local_marble.jpg')
+	    .resize(width, height)
+	    .toFormat('png')
+//	    .toFile('local_marble_resized.png')
+	    .toBuffer()
+	    .then( data => {
+
+		   var opts = {
+		       headers: {
+			   'access-control-allow-origin': '*',
+			   'access-control-allow-methods': 'GET'
+		       },
+		       size: Buffer.byteLength(data)
+		   };
+		   var stream = new MemoryStream();
+
+		   client.put('~~/stor/iron-fn-demo/The_Blue_Marble_resized.png', stream, opts, function (err) {
+		       assert.ifError(err);
+		   });
+
+		   stream.end(data);
+	    });
+    });
+});
+
